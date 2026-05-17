@@ -20,7 +20,7 @@ Traditional AI guardrails deploy more LLMs to audit the first LLM, burning massi
 * **Semantic Drift / Nuance:** Manifests as clean, predictable angular deviations ($\sim 0.15$ to $0.40$ rad).
 * **Logical Contradiction:** Triggers an instant, measurable geometric anti-phase signal ($\theta \approx \pi$ rad).
 
-Instead of running heavy inference, `CSIF-Guard` builds a localized `PhaseGraph` and executes an undirected depth-first traversal. By applying signed phase transitivity boundaries ($\theta_{\text{reverse}} = \text{wrap\_pi}(-\theta)$), it measures cycle torsion. If an incoming assertion buckles the graph topology, the firewall trips its circuit breaker in **under 10 milliseconds** using lightweight floating-point arithmetic.
+Instead of running heavy inference, `CSIF-Guard` builds a localized `PhaseGraph` and executes an undirected depth-first traversal. By applying signed phase transitivity boundaries ($\theta_{\mathrm{reverse}} = \operatorname{wrap}_{\pi}(-\theta)$), it measures cycle torsion. If an incoming assertion buckles the graph topology, the firewall trips its circuit breaker in **under 10 milliseconds** using lightweight floating-point arithmetic.
 
 ---
 
@@ -89,13 +89,13 @@ The engine's reliability is strictly governed by IEEE 754 double precision float
 
 Angles are circular. To ensure absolute boundary continuity when calculations swing past the polar horizons ($-\pi$ and $\pi$), the principal wrap natively binds numeric overflow:
 
-$$\text{wrap\_pi}(\theta) = ((\theta + \pi) \bmod 2\pi) - \pi$$
+$$\operatorname{wrap}_{\pi}(\theta) = ((\theta + \pi) \bmod 2\pi) - \pi$$
 
 ### Adaptive Contradiction Thresholding
 
 The boundary for triggering an internal logic violation scales dynamically with the localized uncertainty tracking envelope ($\sigma$) of the graph path using an empirical stability constant $c$:
 
-$$\text{Threshold}_{\text{alarm}} = \frac{\pi}{2} + c \cdot \sigma_{\text{path}}$$
+$$T_{\mathrm{alarm}} = \frac{\pi}{2} + c \cdot \sigma_{\mathrm{path}}$$
 
 ---
 
