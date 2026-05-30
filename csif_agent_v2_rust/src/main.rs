@@ -950,6 +950,103 @@ fn complex_phase(value: ComplexValue) -> f64 {
     }
 }
 
+fn pow10_i128(exp: u32) -> Option<i128> {
+    let mut value: i128 = 1;
+    for _ in 0..exp {
+        value = value.checked_mul(10)?;
+    }
+    Some(value)
+}
+
+fn decimal_components(value: f64) -> Option<(i128, u32)> {
+    if !value.is_finite() {
+        return None;
+    }
+
+    let raw = value.to_string();
+    let (negative, body) = if let Some(stripped) = raw.strip_prefix('-') {
+        (true, stripped)
+    } else {
+        (false, raw.as_str())
+    };
+
+    let (mantissa, exponent) = if let Some((m, e)) = body.split_once(['e', 'E']) {
+        let parsed_exp = e.parse::<i32>().ok()?;
+        (m, parsed_exp)
+    } else {
+        (body, 0)
+    };
+
+    let (whole, frac) = if let Some((w, f)) = mantissa.split_once('.') {
+        (w, f)
+    } else {
+        (mantissa, "")
+    };
+
+    let mut digits = String::new();
+    digits.push_str(whole);
+    digits.push_str(frac);
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut coefficient = digits.parse::<i128>().ok()?;
+    if negative {
+        coefficient = -coefficient;
+    }
+
+    let mut scale: i32 = frac.len() as i32 - exponent;
+    if scale < 0 {
+        let factor = pow10_i128((-scale) as u32)?;
+        coefficient = coefficient.checked_mul(factor)?;
+        scale = 0;
+    }
+
+    let mut out_scale = scale as u32;
+    while out_scale > 0 && coefficient % 10 == 0 {
+        coefficient /= 10;
+        out_scale -= 1;
+    }
+
+    Some((coefficient, out_scale))
+}
+
+fn decimal_to_f64(coefficient: i128, scale: u32) -> Option<f64> {
+    if scale == 0 {
+        return coefficient.to_string().parse::<f64>().ok();
+    }
+
+    let sign = if coefficient < 0 { "-" } else { "" };
+    let digits = coefficient.abs().to_string();
+    let scale_usize = scale as usize;
+    let body = if digits.len() <= scale_usize {
+        format!("0.{}{}", "0".repeat(scale_usize - digits.len()), digits)
+    } else {
+        let split = digits.len() - scale_usize;
+        format!("{}.{}", &digits[..split], &digits[split..])
+    };
+
+    format!("{}{}", sign, body).parse::<f64>().ok()
+}
+
+fn geometric_decimal_binary(op: char, left: f64, right: f64) -> Option<f64> {
+    let (l_coeff, l_scale) = decimal_components(left)?;
+    let (r_coeff, r_scale) = decimal_components(right)?;
+    let scale = l_scale.max(r_scale);
+    let l_factor = pow10_i128(scale.checked_sub(l_scale)?)?;
+    let r_factor = pow10_i128(scale.checked_sub(r_scale)?)?;
+    let l_adj = l_coeff.checked_mul(l_factor)?;
+    let r_adj = r_coeff.checked_mul(r_factor)?;
+
+    let result_coeff = match op {
+        '+' => l_adj.checked_add(r_adj)?,
+        '-' => l_adj.checked_sub(r_adj)?,
+        _ => return None,
+    };
+
+    decimal_to_f64(result_coeff, scale)
+}
+
 fn c_add(a: ComplexValue, b: ComplexValue) -> ComplexValue {
     a + b
 }
@@ -7002,6 +7099,16 @@ fn evaluate_ast_complex(
             let l = evaluate_ast_complex(left, state, options, steps)?;
             let r = evaluate_ast_complex(right, state, options, steps)?;
             let result = match op {
+                '+' if options.mode == MathMode::Geometric && l.is_real() && r.is_real() => {
+                    geometric_decimal_binary('+', l.re, r.re)
+                        .map(|v| ComplexValue::new(v, 0.0))
+                        .unwrap_or_else(|| c_add(l, r))
+                }
+                '-' if options.mode == MathMode::Geometric && l.is_real() && r.is_real() => {
+                    geometric_decimal_binary('-', l.re, r.re)
+                        .map(|v| ComplexValue::new(v, 0.0))
+                        .unwrap_or_else(|| c_sub(l, r))
+                }
                 '+' => c_add(l, r),
                 '-' => c_sub(l, r),
                 '*' => c_mul(l, r),
@@ -11497,6 +11604,31 @@ mod tests {
             .and_then(Value::as_array)
             .expect("derivation trace should exist");
         assert!(steps.iter().any(|s| s.get("geometry").is_some()));
+    }
+
+    #[test]
+    fn geometric_mode_avoids_decimal_binary_float_trap() {
+        let state = AppState {
+            bank_summary: None,
+            bank_index: None,
+            sense_trajectory_log_path: None,
+        };
+        let payload = evaluate_math_expression(
+            "0.1+0.2",
+            &state,
+            MathOptions {
+                mode: MathMode::Geometric,
+                angle_unit: AngleUnit::Radians,
+            },
+        )
+        .expect("geometric decimal scaling should evaluate");
+
+        let result = payload
+            .get("result")
+            .and_then(Value::as_f64)
+            .expect("result should be numeric");
+        assert!((result - 0.3).abs() < 1e-12);
+        assert_ne!(result, 0.30000000000000004_f64);
     }
 
     #[test]
